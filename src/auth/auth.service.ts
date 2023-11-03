@@ -1,12 +1,11 @@
-import {ForbiddenException, Injectable, Req} from '@nestjs/common';
-import { PrismaService } from "../prisma/prisma.service";
-import { RegisterAuthDto } from "./dto/register-auth.dto";
-import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
-import { LoginAuthDto } from "./dto/login-auth.dto";
-import { JwtService } from "@nestjs/jwt";
-import { ConfigService } from "@nestjs/config";
+import {ForbiddenException, Injectable} from '@nestjs/common';
+import {PrismaService} from "../prisma/prisma.service";
+import {RegisterAuthDto} from "./dto/register-auth.dto";
+import {PrismaClientKnownRequestError} from "@prisma/client/runtime/library";
+import {LoginAuthDto} from "./dto/login-auth.dto";
+import {JwtService} from "@nestjs/jwt";
+import {ConfigService} from "@nestjs/config";
 import * as argon from 'argon2';
-import {GoogleAuthDto} from "./dto/google-auth.dto";
 
 @Injectable()
 export class AuthService {
@@ -20,10 +19,12 @@ export class AuthService {
         let {username, email, password } = dto;
         const hashedPassword = await argon.hash(password);
         try {
+            // const verifyToken = await this.hashData(password);
             const user = await this.prisma.user.create({
                 data: {
                     username,
                     email,
+                    // verifyToken,
                     password : hashedPassword,
                 }
             });
@@ -51,71 +52,83 @@ export class AuthService {
         if (!isPasswordValid) {
             throw new ForbiddenException('Password is not valid!');
         }
-        const payload = {
-            sub: user.id,
-            email: user.email,
+        return await this.getTokens(user.id, user.email);
+    }
+
+    async oauthRegister(req : any) {
+        const { username, email , providerId, provider, name, picture } = req.user;
+        const usernameTemp = username ? username : "user" + Math.floor(Math.random() * 1000000);
+        // const verifyToken = await this.hashData(email + providerId);
+        try {
+            await this.prisma.user.create({
+                data: {
+                    name,
+                    username : usernameTemp,
+                    email,
+                    provider,
+                    providerId,
+                    // verifyToken,
+                    profileImage: picture ? picture : null,
+                }
+            })
+            const user = await this.prisma.user.findUnique({
+                where: {
+                    email : email,
+                },
+            })
+            return await this.getTokens(user.id, user.email);
+        } catch (e) {
+            if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
+                throw new ForbiddenException('Username or email already exists');
+            }
+            throw e;
         }
+    }
+
+    async oauthLogin(req : any) {
+        const { email } = req.user;
+        const user = await this.prisma.user.findUnique({
+            where: {
+                email
+            }
+        });
+        if (!user) {
+            return await this.oauthRegister(req);
+        }
+        return await this.getTokens(user.id, user.email);
+    }
+
+    async refreshTokens(id: number, refreshToken: string) {
+        const user = await this.prisma.user.findUnique({
+            where: {
+                id : id,
+            },
+        });
+        if (!user) throw new ForbiddenException('Access Denied');
+        const accessToken = await this.jwt.signAsync({ sub : id, email : user.email }, {
+            secret: this.config.get<string>('JWT_SECRET_TOKEN'),
+            expiresIn: this.config.get<string>('JWT_SECRET_TOKEN_EXPIRED'),
+        })
         return {
-            access_token: await this.jwt.signAsync(payload, {
-                secret:this.config.get('JWT_SECRET')
-            }),
-        };
-    }
-
-    // async googleLogin(dto : GoogleAuthDto) {
-    //     const { email , picture, providerId, firstName, lastName } = dto;
-    //     const tempUsername = "user" + Math.floor(Math.random() * 1000000);
-    //     try {
-    //         const user = await this.prisma.user.create({
-    //             data: {
-    //                 email : email,
-    //                 profileImage: picture,
-    //                 username: tempUsername,
-    //                 firstName: firstName,
-    //                 lastName: lastName,
-    //                 providerId: providerId,
-    //                 emailVerified: true,
-    //                 provider: 'google',
-    //             }
-    //         });
-    //         let payload = {
-    //             sub: user.id,
-    //             email: user.email,
-    //         }
-    //         return {
-    //             access_token: await this.jwt.signAsync(payload, {
-    //                 secret:this.config.get('JWT_SECRET')
-    //             })
-    //         }
-    //     } catch (e) {
-    //         if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
-    //             const user = await this.prisma.user.findUnique({
-    //                 where: {
-    //                     email: email
-    //                 }
-    //             });
-    //             let payload = {
-    //                 sub: user.id,
-    //                 email: user.email,
-    //             }
-    //             return {
-    //                 access_token: await this.jwt.signAsync(payload, {
-    //                     secret:this.config.get('JWT_SECRET')
-    //                 })
-    //             }
-    //         }
-    //     }
-    //
-    //
-    // }
-
-    async googleLogin(req) {
-        return { user : req.user };
-    }
-    async githubLogin(req) {
-        if (!req.user) {
-            return 'No user from github';
+            access_token : accessToken,
         }
-        return { user : req.user };
     }
+
+    async getTokens(id : number, email : string) {
+        const [accessToken, refreshToken ] = await Promise.all([
+            this.jwt.signAsync({ sub : id, email }, {
+                secret: this.config.get<string>('JWT_SECRET_TOKEN'),
+                expiresIn : this.config.get<string>('JWT_SECRET_TOKEN_EXPIRED'),
+            }),
+            this.jwt.signAsync({ sub : id, email }, {
+                secret: this.config.get<string>('JWT_REFRESH_TOKEN'),
+                expiresIn :this.config.get<string>('JWT_REFRESH_TOKEN_EXPIRED')
+            }),
+        ]);
+        return {
+            access_token : accessToken,
+            refresh_token : refreshToken,
+        }
+    }
+
 }

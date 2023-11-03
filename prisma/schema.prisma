@@ -14,14 +14,13 @@ model User {
   username           String   @unique
   createdAt          DateTime @default(now())
   emailVerified      Boolean? @default(false)
-  firstName          String?
-  lastName           String?
   passwordResetToken String?
   provider           String?  @default("email")
   providerId         String?
   updatedAt          DateTime @updatedAt
   verifyToken        String?
   profileImage       String?
+  name               String?
 
   @@map("users")
 }

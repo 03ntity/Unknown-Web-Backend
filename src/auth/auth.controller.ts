@@ -2,8 +2,11 @@ import { Controller, Post, Body, Get, UseGuards, Req, Res} from '@nestjs/common'
 import { AuthService } from "./auth.service";
 import { RegisterAuthDto } from "./dto/register-auth.dto";
 import { LoginAuthDto } from "./dto/login-auth.dto";
-import { AuthGuard } from "@nestjs/passport";
-import {GoogleAuthDto} from "./dto/google-auth.dto";
+import { Request , Response } from 'express';
+import { GithubGuard, GoogleGuard } from "./guard";
+import {JwtRtGuard} from "./guard/rt.guard";
+import { GetCurrentUserId } from "./decorators/get-current-user-id.decorator";
+import { GetCurrentUser } from "./decorators/get-current-user.decorator";
 
 @Controller('auth')
 export class AuthController {
@@ -19,24 +22,35 @@ export class AuthController {
         return this.authService.login(request);
     }
 
+
+    @UseGuards(JwtRtGuard)
+    @Post('refresh')
+    refreshTokens(@GetCurrentUserId() userId: number, @GetCurrentUser('refreshToken') refreshToken: string) {
+        return this.authService.refreshTokens(userId, refreshToken);
+    }
+
     @Get('google')
-    @UseGuards(AuthGuard('google'))
+    @UseGuards(GoogleGuard)
     async googleLogin(@Req() req : Request) {}
 
     @Get('google/callback')
-    @UseGuards(AuthGuard('google'))
-    googleLoginRedirect(@Req() req)  {
-        return this.authService.googleLogin(req);
+    @UseGuards(GoogleGuard)
+    async googleLoginRedirect(@Req() req : Request, @Res() res: Response) {
+        const token = await this.authService.oauthLogin(req);
+        res.cookie('access_token', token.access_token, { sameSite : true, secure : true, httpOnly: true })
+        return res.json(token);
     }
 
     @Get('github')
-    @UseGuards(AuthGuard('github'))
+    @UseGuards(GithubGuard)
     async githubLogin(@Req() req : Request) {}
 
     @Get('github/callback')
-    @UseGuards(AuthGuard('github'))
-    githubLoginRedirect(@Req() req)  {
-        return this.authService.githubLogin(req);
+    @UseGuards(GithubGuard)
+    async githubLoginRedirect(@Req() req : Request, @Res() res : Response)  {
+        const token = await this.authService.oauthLogin(req);
+        res.cookie('access_token', token.access_token, { sameSite : true, secure : true, httpOnly: true })
+        return res.json(token);
     }
 
 }
